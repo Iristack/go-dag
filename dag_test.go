@@ -296,3 +296,214 @@ func TestStructDAG(t *testing.T) {
 		t.Errorf("Expected 3 nodes in sorted result, got %d", len(sorted))
 	}
 }
+
+// TestSerializeDAG 测试结构体类型的 DAG 序列化
+func TestSerializeDAG(t *testing.T) {
+	type Node struct {
+		ID   int
+		Name string
+	}
+
+	d := NewDAG[Node]()
+
+	nodes := []Node{
+		{ID: 1, Name: "A"},
+		{ID: 2, Name: "B"},
+		{ID: 3, Name: "C"},
+	}
+
+	_ = d.AddEdge(nodes[0], nodes[1])
+	_ = d.AddEdge(nodes[1], nodes[2])
+
+	data, err := d.Serialize()
+	if err != nil {
+		t.Fatalf("Serialize failed: %v", err)
+	}
+	t.Logf("Serialized: %s", string(data))
+
+	// 反序列化
+	d2 := NewDAG[Node]()
+	err = d2.Deserialize(data)
+	if err != nil {
+		t.Fatalf("Deserialize failed: %v", err)
+	}
+
+	// 验证节点数量
+	if d2.NodeCount() != d.NodeCount() {
+		t.Errorf("Expected %d nodes, got %d", d.NodeCount(), d2.NodeCount())
+	}
+
+	// 验证边数量
+	if d2.EdgeCount() != d.EdgeCount() {
+		t.Errorf("Expected %d edges, got %d", d.EdgeCount(), d2.EdgeCount())
+	}
+
+	// 验证拓扑排序
+	sorted, err := d2.Sort()
+	if err != nil {
+		t.Fatalf("Sort failed: %v", err)
+	}
+	if len(sorted) != 3 {
+		t.Errorf("Expected 3 nodes in sorted result, got %d", len(sorted))
+	}
+}
+
+// TestSerializeDAGWithAdjacency 测试使用邻接表序列化
+func TestSerializeDAGWithAdjacency(t *testing.T) {
+	d := NewDAG[string]()
+	_ = d.AddEdge("a", "b")
+	_ = d.AddEdge("b", "c")
+	_ = d.AddEdge("c", "d")
+
+	data, err := d.SerializeWithAdjacency()
+	if err != nil {
+		t.Fatalf("SerializeWithAdjacency failed: %v", err)
+	}
+	t.Logf("Serialized: %s", string(data))
+
+	// 反序列化
+	d2 := NewDAG[string]()
+	err = d2.DeserializeWithAdjacency(data)
+	if err != nil {
+		t.Fatalf("DeserializeWithAdjacency failed: %v", err)
+	}
+
+	// 验证
+	if d2.NodeCount() != d.NodeCount() {
+		t.Errorf("Expected %d nodes, got %d", d.NodeCount(), d2.NodeCount())
+	}
+	if d2.EdgeCount() != d.EdgeCount() {
+		t.Errorf("Expected %d edges, got %d", d.EdgeCount(), d2.EdgeCount())
+	}
+}
+
+// TestSerializeDAGToBase64 测试 Base64 序列化
+func TestSerializeDAGToBase64(t *testing.T) {
+	d := NewDAG[string]()
+	_ = d.AddEdge("a", "b")
+	_ = d.AddEdge("b", "c")
+	_ = d.AddEdge("c", "d")
+
+	base64Str, err := d.SerializeToBase64()
+	if err != nil {
+		t.Fatalf("SerializeToBase64 failed: %v", err)
+	}
+	t.Logf("Base64: %s", base64Str)
+
+	// 反序列化
+	d2 := NewDAG[string]()
+	err = d2.DeserializeFromBase64(base64Str)
+	if err != nil {
+		t.Fatalf("DeserializeFromBase64 failed: %v", err)
+	}
+
+	// 验证
+	if d2.NodeCount() != d.NodeCount() {
+		t.Errorf("Expected %d nodes, got %d", d.NodeCount(), d2.NodeCount())
+	}
+	if d2.EdgeCount() != d.EdgeCount() {
+		t.Errorf("Expected %d edges, got %d", d.EdgeCount(), d2.EdgeCount())
+	}
+}
+
+// TestSerializeIntDAG 测试整数类型 DAG 的序列化
+func TestSerializeIntDAG(t *testing.T) {
+	d := NewDAG[int]()
+	edges := [][2]int{
+		{1, 2},
+		{2, 3},
+		{3, 4},
+		{4, 5},
+	}
+
+	for _, edge := range edges {
+		if err := d.AddEdge(edge[0], edge[1]); err != nil {
+			t.Fatalf("AddEdge failed: %v", err)
+		}
+	}
+
+	data, err := d.Serialize()
+	if err != nil {
+		t.Fatalf("Serialize failed: %v", err)
+	}
+	t.Logf("Serialized: %s", string(data))
+
+	// 反序列化
+	d2 := NewDAG[int]()
+	err = d2.Deserialize(data)
+	if err != nil {
+		t.Fatalf("Deserialize failed: %v", err)
+	}
+
+	// 验证拓扑排序
+	sorted, err := d2.Sort()
+	if err != nil {
+		t.Fatalf("Sort failed: %v", err)
+	}
+	if len(sorted) != 5 {
+		t.Errorf("Expected 5 nodes in sorted result, got %d", len(sorted))
+	}
+}
+
+// TestGetLayersSimple 测试简单 DAG 的分层
+func TestGetLayersSimple(t *testing.T) {
+	d := NewDAG[string]()
+	// 创建分层图：
+	// Layer 0: a, b
+	// Layer 1: c, d
+	// Layer 2: e
+	_ = d.AddEdge("a", "c")
+	_ = d.AddEdge("a", "d")
+	_ = d.AddEdge("b", "c")
+	_ = d.AddEdge("b", "d")
+	_ = d.AddEdge("c", "e")
+	_ = d.AddEdge("d", "e")
+
+	layers := d.GetLayers()
+
+	if len(layers) != 3 {
+		t.Errorf("Expected 3 layers, got %d", len(layers))
+	}
+
+	// 验证第一层（根节点）
+	if len(layers[0]) != 2 {
+		t.Errorf("Expected 2 nodes in layer 0, got %d", len(layers[0]))
+	}
+
+	// 验证第二层
+	if len(layers[1]) != 2 {
+		t.Errorf("Expected 2 nodes in layer 1, got %d", len(layers[1]))
+	}
+
+	// 验证第三层（叶子节点）
+	if len(layers[2]) != 1 {
+		t.Errorf("Expected 1 node in layer 2, got %d", len(layers[2]))
+	}
+
+	t.Logf("Layers: %v", layers)
+}
+
+// TestGetLayersEmpty 测试空 DAG 的分层
+func TestGetLayersEmpty(t *testing.T) {
+	d := NewDAG[string]()
+	layers := d.GetLayers()
+
+	if len(layers) != 0 {
+		t.Errorf("Expected 0 layers for empty DAG, got %d", len(layers))
+	}
+}
+
+// TestGetLayersSingleNode 测试单个节点的 DAG
+func TestGetLayersSingleNode(t *testing.T) {
+	d := NewDAG[string]()
+	d.AddNode("single")
+
+	layers := d.GetLayers()
+
+	if len(layers) != 1 {
+		t.Errorf("Expected 1 layer for single node DAG, got %d", len(layers))
+	}
+	if len(layers[0]) != 1 || layers[0][0] != "single" {
+		t.Errorf("Expected layer 0 to contain 'single'")
+	}
+}

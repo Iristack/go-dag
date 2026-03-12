@@ -1,6 +1,8 @@
 package dag
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"sort"
 )
@@ -127,7 +129,6 @@ func (d *DAG[T]) Sort() ([]T, error) {
 }
 
 // SortWithOrder 拓扑排序，返回按指定顺序排序的节点序列
-// less 函数用于在入度为 0 的节点之间进行排序，保证结果确定性
 func (d *DAG[T]) SortWithOrder(less func(a, b T) bool) ([]T, error) {
 	inDegree := make(map[T]int, len(d.nodes))
 
@@ -241,4 +242,205 @@ func (d *DAG[T]) EdgeCount() int {
 		count += len(neighbors)
 	}
 	return count
+}
+
+// dagDto 用于序列化的数据传输对象
+type dagDto[T comparable] struct {
+	Nodes      []T       `json:"nodes"`
+	Edges      []edge[T] `json:"edges"`
+	Adjacency  map[T][]T `json:"adjacency,omitempty"`
+	ReverseAdj map[T][]T `json:"reverse_adj,omitempty"`
+}
+
+// edge 表示一条边
+type edge[T comparable] struct {
+	From T `json:"from"`
+	To   T `json:"to"`
+}
+
+// Serialize 序列化图为 JSON 字节
+func (d *DAG[T]) Serialize() ([]byte, error) {
+	// 收集所有节点
+	nodes := make([]T, 0, len(d.nodes))
+	for node := range d.nodes {
+		nodes = append(nodes, node)
+	}
+
+	// 收集所有边
+	edges := make([]edge[T], 0)
+	for from, neighbors := range d.adjacency {
+		for _, to := range neighbors {
+			edges = append(edges, edge[T]{From: from, To: to})
+		}
+	}
+
+	dto := dagDto[T]{
+		Nodes: nodes,
+		Edges: edges,
+	}
+
+	return json.Marshal(dto)
+}
+
+// SerializeWithAdjacency 序列化图为 JSON 字节(仅邻接表)
+func (d *DAG[T]) SerializeWithAdjacency() ([]byte, error) {
+	dto := dagDto[T]{
+		Adjacency:  d.adjacency,
+		ReverseAdj: d.reverseAdj,
+	}
+
+	return json.Marshal(dto)
+}
+
+// Deserialize 从 JSON 字节反序列化图
+func (d *DAG[T]) Deserialize(data []byte) error {
+	var dto dagDto[T]
+	if err := json.Unmarshal(data, &dto); err != nil {
+		return err
+	}
+
+	// 重置图
+	d.nodes = make(map[T]bool)
+	d.adjacency = make(map[T][]T)
+	d.reverseAdj = make(map[T][]T)
+
+	// 添加所有节点
+	for _, node := range dto.Nodes {
+		d.AddNode(node)
+	}
+
+	// 添加所有边
+	for _, edge := range dto.Edges {
+		if err := d.AddEdge(edge.From, edge.To); err != nil {
+			return fmt.Errorf("failed to add edge %v -> %v: %w", edge.From, edge.To, err)
+		}
+	}
+
+	return nil
+}
+
+// DeserializeWithAdjacency 从 JSON 字节反序列化图
+func (d *DAG[T]) DeserializeWithAdjacency(data []byte) error {
+	var dto dagDto[T]
+	if err := json.Unmarshal(data, &dto); err != nil {
+		return err
+	}
+
+	// 重置图
+	d.nodes = make(map[T]bool)
+	d.adjacency = make(map[T][]T)
+	d.reverseAdj = make(map[T][]T)
+
+	// 直接从邻接表恢复
+	d.adjacency = dto.Adjacency
+	d.reverseAdj = dto.ReverseAdj
+
+	// 从邻接表重建节点集合
+	for node := range d.adjacency {
+		d.nodes[node] = true
+	}
+	for _, neighbors := range d.adjacency {
+		for _, neighbor := range neighbors {
+			d.nodes[neighbor] = true
+		}
+	}
+
+	return nil
+}
+
+// SerializeToBase64 序列化图为 Base64 字符串
+func (d *DAG[T]) SerializeToBase64() (string, error) {
+	data, err := d.Serialize()
+	if err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// DeserializeFromBase64 从 Base64 字符串反序列化图
+func (d *DAG[T]) DeserializeFromBase64(data string) error {
+	decoded, err := base64.StdEncoding.DecodeString(data)
+	if err != nil {
+		return err
+	}
+	return d.Deserialize(decoded)
+}
+
+// GetLayers 获取 DAG 的分层结构
+// 返回按层级分组的节点列表，第一层是入度为 0 的节点（根节点）
+// 每一层包含所有直接子节点
+func (d *DAG[T]) GetLayers() [][]T {
+	if len(d.nodes) == 0 {
+		return [][]T{}
+	}
+
+	// 计算每个节点的入度
+	inDegree := make(map[T]int, len(d.nodes))
+	for node := range d.nodes {
+		inDegree[node] = 0
+	}
+	for _, neighbors := range d.adjacency {
+		for _, neighbor := range neighbors {
+			inDegree[neighbor]++
+		}
+	}
+
+	// 找到所有入度为 0 的节点（第一层）
+	currentLayer := make([]T, 0)
+	for node, degree := range inDegree {
+		if degree == 0 {
+			currentLayer = append(currentLayer, node)
+		}
+	}
+
+	if len(currentLayer) == 0 {
+		// 图中存在环
+		return [][]T{}
+	}
+
+	layers := [][]T{currentLayer}
+	visited := make(map[T]bool)
+
+	// 逐层遍历
+	for len(currentLayer) > 0 {
+		nextLayerMap := make(map[T]bool)
+
+		for _, node := range currentLayer {
+			visited[node] = true
+			for _, child := range d.adjacency[node] {
+				if !visited[child] {
+					// 检查是否所有父节点都已访问
+					allParentsVisited := true
+					for _, parent := range d.reverseAdj[child] {
+						if !visited[parent] {
+							allParentsVisited = false
+							break
+						}
+					}
+					if allParentsVisited {
+						nextLayerMap[child] = true
+					}
+				}
+			}
+		}
+
+		if len(nextLayerMap) == 0 {
+			break
+		}
+
+		nextLayer := make([]T, 0, len(nextLayerMap))
+		for node := range nextLayerMap {
+			nextLayer = append(nextLayer, node)
+		}
+		layers = append(layers, nextLayer)
+		currentLayer = nextLayer
+	}
+
+	return layers
+}
+
+// GetLayerJSON 获取 DAG 的分层结构并返回 JSON
+func (d *DAG[T]) GetLayerJSON() ([]byte, error) {
+	layers := d.GetLayers()
+	return json.Marshal(layers)
 }
